@@ -46,27 +46,35 @@ async def verify():
     logger.info(f"Checking files... Found {file_count} files in DB.")
     
     if file_count > 0:
-        # Check a sample file for physical existence
-        logger.info("Verifying physical file existence for a sample...")
-        sample_file = await db.files.find_one({})
+        logger.info("Verifying all files...")
+        missing = 0
+        found = 0
         
-        try:
-            folder_path = await get_folder_path(db, sample_file['folder_id'], FILES_DIR)
-            file_path = folder_path / sample_file['stored_name']
-            
-            if file_path.exists():
-                logger.info(f"✅ Sample file found on disk: {file_path}")
-            else:
-                logger.error(f"❌ Sample file MISSING on disk: {file_path}")
-                logger.info(f"   (This suggests migration didn't run or failed)")
+        async for file_doc in db.files.find({}):
+            try:
+                folder_path = await get_folder_path(db, file_doc['folder_id'], FILES_DIR)
+                file_path = folder_path / file_doc['stored_name']
                 
-                # Check if it exists in old location
-                old_path = FILES_DIR / sample_file['stored_name']
-                if old_path.exists():
-                    logger.info(f"   ⚠️  File found at OLD location: {old_path}")
-                    logger.info("       -> You need to run the migration script!")
-        except Exception as e:
-            logger.error(f"Error checking file path: {e}")
+                if file_path.exists():
+                    found += 1
+                else:
+                    missing += 1
+                    logger.error(f"❌ MISSING: {file_doc['name']} (ID: {file_doc['id']})")
+                    logger.error(f"   Expected at: {file_path}")
+            except Exception as e:
+                logger.error(f"Error checking file {file_doc.get('id')}: {e}")
+                missing += 1
+
+        logger.info("-" * 40)
+        logger.info(f"Verification Summary:")
+        logger.info(f"✅ Found: {found}")
+        if missing > 0:
+            logger.info(f"❌ Missing: {missing}")
+            logger.info("Recommendation: Run 'python backend/migrate_storage.py' to fix paths.")
+        else:
+            logger.info("🎉 All files verified successfully!")
+    else:
+        logger.info("No files to verify.")
 
     logger.info("Verification complete.")
 

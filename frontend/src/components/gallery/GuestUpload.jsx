@@ -67,10 +67,12 @@ export default function GuestUpload({ token, folderName, allowedTypes }) {
                 if (res.ok) {
                     setUploads(prev => prev.map(u => u.id === upload.id ? { ...u, status: 'success', progress: 100 } : u));
                 } else {
-                    throw new Error('Upload failed');
+                    const errorData = await res.json().catch(() => ({}));
+                    const errorMessage = errorData.detail || `Upload failed (${res.status})`;
+                    throw new Error(errorMessage);
                 }
             } catch (e) {
-                setUploads(prev => prev.map(u => u.id === upload.id ? { ...u, status: 'error' } : u));
+                setUploads(prev => prev.map(u => u.id === upload.id ? { ...u, status: 'error', error: e.message } : u));
             }
         }
 
@@ -137,7 +139,16 @@ export default function GuestUpload({ token, folderName, allowedTypes }) {
                                 <div className="flex items-center gap-3">
                                     {upload.status === 'uploading' && <Loader2 className="w-5 h-5 text-[#ad946d] animate-spin" />}
                                     {upload.status === 'success' && <Check className="w-5 h-5 text-green-500" />}
-                                    {upload.status === 'error' && <X className="w-5 h-5 text-red-500" />}
+                                    {upload.status === 'error' && (
+                                        <div className="group relative">
+                                            <X className="w-5 h-5 text-red-500 cursor-help" />
+                                            {upload.error && (
+                                                <div className="absolute right-0 top-full mt-2 w-48 bg-red-50 text-red-600 text-xs p-2 rounded shadow-lg z-20 hidden group-hover:block border border-red-100">
+                                                    {upload.error}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {upload.status === 'pending' && (
                                         <button onClick={() => removeUpload(upload.id)} className="text-gray-400 hover:text-red-500">
