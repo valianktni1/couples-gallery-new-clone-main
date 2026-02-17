@@ -2,21 +2,6 @@
 
 This guide explains how to deploy the optimized Couples Gallery application on TrueNAS Scale using Docker Compose.
 
-## Prerequisites
-
-- TrueNAS Scale installed and running.
-- Access to "Custom App" or "Launch Docker Image" feature (or Portainer if installed).
-- A dataset created for persistent storage (e.g., `/mnt/tank/apps/gallery`).
-
-## Preparation
-
-1.  **Clone or Copy Repo**: Ensure this repository is accessible on your TrueNAS server, or you can copy the contents of `truenas_docker_compose.yml` to use directly in the TrueNAS UI.
-2.  **Create Folders**: Create the following folders in your dataset to persist data:
-    -   `db` (for MongoDB data)
-    -   `thumbnails` (generated thumbnails)
-    -   `previews` (generated previews)
-    -   `files` (your original high-res images)
-
 ## Deployment Steps
 
 1.  **Compose File**: Use the `truenas_docker_compose.yml` file. It is pre-configured with your specific paths.
