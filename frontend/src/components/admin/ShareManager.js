@@ -44,18 +44,20 @@ export default function ShareManager() {
   const [shares, setShares] = useState([]);
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Dialogs
   const [showNewShare, setShowNewShare] = useState(false);
   const [showQRCode, setShowQRCode] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [editingShare, setEditingShare] = useState(null);
-  
+
   // New share form
   const [newShare, setNewShare] = useState({
     folder_id: '',
     token: '',
-    permission: 'read'
+    permission: 'read',
+    upload_only: false,
+    allowed_file_types: 'all' // all, image, video
   });
 
   const headers = { Authorization: `Bearer ${token}` };
@@ -98,7 +100,7 @@ export default function ShareManager() {
 
     // Clean the token (remove spaces, special chars)
     const cleanToken = newShare.token.toLowerCase().replace(/[^a-z0-9]/g, '');
-    
+
     try {
       const res = await fetch(`${API}/shares`, {
         method: 'POST',
@@ -106,14 +108,24 @@ export default function ShareManager() {
         body: JSON.stringify({
           folder_id: newShare.folder_id,
           token: cleanToken,
-          permission: newShare.permission
+          permission: newShare.permission,
+          upload_only: newShare.upload_only,
+          allowed_file_types: newShare.allowed_file_types === 'all' ? null :
+            newShare.allowed_file_types === 'image' ? ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'] :
+              ['.mp4', '.mov', '.avi', '.mkv', '.webm']
         })
       });
 
       if (res.ok) {
         toast.success('Share link created');
         setShowNewShare(false);
-        setNewShare({ folder_id: '', token: '', permission: 'read' });
+        setNewShare({
+          folder_id: '',
+          token: '',
+          permission: 'read',
+          upload_only: false,
+          allowed_file_types: 'all'
+        });
         fetchShares();
       } else {
         const error = await res.json();
@@ -192,6 +204,17 @@ export default function ShareManager() {
     );
   };
 
+  const getUploadBadge = (share) => {
+    if (share.upload_only) {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-purple-500/20 text-purple-400">
+          Upload Only
+        </span>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -208,108 +231,117 @@ export default function ShareManager() {
           <Plus className="w-4 h-4 mr-2" />
           Create Share Link
         </Button>
-      </div>
+      </div >
 
       {/* Shares List */}
-      {shares.length > 0 ? (
-        <div className="space-y-4">
-          <AnimatePresence>
-            {shares.map((share, index) => (
-              <motion.div
-                key={share.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ delay: index * 0.05 }}
-                className="bg-[#1a1a1a] rounded-lg border border-[#2a2a2a] p-5 hover:border-[#3a3a3a] transition-colors"
-                data-testid={`share-${share.id}`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-lg bg-[#ad946d]/20 flex items-center justify-center">
-                      <FolderOpen className="w-6 h-6 text-[#ad946d]" />
+      {
+        shares.length > 0 ? (
+          <div className="space-y-4">
+            <AnimatePresence>
+              {shares.map((share, index) => (
+                <motion.div
+                  key={share.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="bg-[#1a1a1a] rounded-lg border border-[#2a2a2a] p-5 hover:border-[#3a3a3a] transition-colors"
+                  data-testid={`share-${share.id}`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-lg bg-[#ad946d]/20 flex items-center justify-center">
+                        <FolderOpen className="w-6 h-6 text-[#ad946d]" />
+                      </div>
+                      <div>
+                        <h3 className="font-medium text-white mb-1">{share.folder_name}</h3>
+                        <div className="flex items-center gap-2 mb-2">
+                          <code className="text-sm text-[#ad946d] bg-[#252525] px-2 py-1 rounded">
+                            {share.share_url}
+                          </code>
+                          <button
+                            onClick={() => copyToClipboard(share.share_url)}
+                            className="text-gray-400 hover:text-white p-1"
+                            data-testid={`copy-${share.id}`}
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {getPermissionBadge(share.permission)}
+                          {getUploadBadge(share)}
+                          {share.allowed_file_types && (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-gray-500/20 text-gray-400">
+                              {share.allowed_file_types.length > 5 ? 'Restricted Types' :
+                                share.allowed_file_types.includes('.jpg') ? 'Images Only' : 'Videos Only'}
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-500">
+                            Created {new Date(share.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-medium text-white mb-1">{share.folder_name}</h3>
-                      <div className="flex items-center gap-2 mb-2">
-                        <code className="text-sm text-[#ad946d] bg-[#252525] px-2 py-1 rounded">
-                          {share.share_url}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(share.share_url)}
-                          className="text-gray-400 hover:text-white p-1"
-                          data-testid={`copy-${share.id}`}
-                        >
-                          <Copy className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        {getPermissionBadge(share.permission)}
-                        <span className="text-xs text-gray-500">
-                          Created {new Date(share.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setShowQRCode(share)}
+                        className="text-gray-400 hover:text-white"
+                        data-testid={`qr-${share.id}`}
+                      >
+                        <QrCode className="w-5 h-5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => window.open(`/${share.token}`, '_blank')}
+                        className="text-gray-400 hover:text-white"
+                        data-testid={`preview-${share.id}`}
+                      >
+                        <ExternalLink className="w-5 h-5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setEditingShare({ ...share })}
+                        className="text-gray-400 hover:text-white"
+                        data-testid={`edit-${share.id}`}
+                      >
+                        <Edit2 className="w-5 h-5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setDeleteTarget(share)}
+                        className="text-gray-400 hover:text-red-400"
+                        data-testid={`delete-${share.id}`}
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setShowQRCode(share)}
-                      className="text-gray-400 hover:text-white"
-                      data-testid={`qr-${share.id}`}
-                    >
-                      <QrCode className="w-5 h-5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => window.open(`/${share.token}`, '_blank')}
-                      className="text-gray-400 hover:text-white"
-                      data-testid={`preview-${share.id}`}
-                    >
-                      <ExternalLink className="w-5 h-5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setEditingShare({ ...share })}
-                      className="text-gray-400 hover:text-white"
-                      data-testid={`edit-${share.id}`}
-                    >
-                      <Edit2 className="w-5 h-5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleteTarget(share)}
-                      className="text-gray-400 hover:text-red-400"
-                      data-testid={`delete-${share.id}`}
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </Button>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      ) : !loading ? (
-        <div className="text-center py-20">
-          <div className="w-16 h-16 rounded-full bg-[#252525] flex items-center justify-center mx-auto mb-4">
-            <Share2 className="w-8 h-8 text-gray-500" />
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
-          <h3 className="text-lg font-medium text-white mb-2">No share links yet</h3>
-          <p className="text-gray-500 mb-4">Create your first share link to let couples access their gallery</p>
-          <Button
-            onClick={() => setShowNewShare(true)}
-            className="bg-[#ad946d] hover:bg-[#9a8460] text-white"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Create Share Link
-          </Button>
-        </div>
-      ) : null}
+        ) : !loading ? (
+          <div className="text-center py-20">
+            <div className="w-16 h-16 rounded-full bg-[#252525] flex items-center justify-center mx-auto mb-4">
+              <Share2 className="w-8 h-8 text-gray-500" />
+            </div>
+            <h3 className="text-lg font-medium text-white mb-2">No share links yet</h3>
+            <p className="text-gray-500 mb-4">Create your first share link to let couples access their gallery</p>
+            <Button
+              onClick={() => setShowNewShare(true)}
+              className="bg-[#ad946d] hover:bg-[#9a8460] text-white"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create Share Link
+            </Button>
+          </div>
+        ) : null
+      }
 
       {/* New Share Dialog */}
       <Dialog open={showNewShare} onOpenChange={setShowNewShare}>
@@ -381,6 +413,39 @@ export default function ShareManager() {
                   </SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center space-x-2 pt-4">
+                <input
+                  type="checkbox"
+                  id="upload_only"
+                  checked={newShare.upload_only}
+                  onChange={(e) => setNewShare({ ...newShare, upload_only: e.target.checked })}
+                  className="w-4 h-4 rounded border-gray-600 bg-[#252525] text-[#ad946d] focus:ring-[#ad946d]"
+                />
+                <Label htmlFor="upload_only" className="text-gray-300 pointer-events-none">
+                  Upload Only (Blind)
+                  <p className="text-xs text-gray-500">Guests cannot see files</p>
+                </Label>
+              </div>
+
+              <div>
+                <Label className="text-gray-300">File Types</Label>
+                <Select
+                  value={newShare.allowed_file_types}
+                  onValueChange={(value) => setNewShare({ ...newShare, allowed_file_types: value })}
+                >
+                  <SelectTrigger className="mt-2 bg-[#252525] border-[#333] text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#252525] border-[#333]">
+                    <SelectItem value="all" className="text-white focus:bg-[#333]">All Supported</SelectItem>
+                    <SelectItem value="image" className="text-white focus:bg-[#333]">Images Only</SelectItem>
+                    <SelectItem value="video" className="text-white focus:bg-[#333]">Videos Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -519,6 +584,6 @@ export default function ShareManager() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </div >
   );
 }

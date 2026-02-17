@@ -7,6 +7,7 @@ import {
   Play, Image as ImageIcon, Film, ChevronLeft, ChevronRight as ChevronRightIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import GuestUpload from '@/components/gallery/GuestUpload';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -230,146 +231,158 @@ export default function GalleryPage() {
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
-        {/* Folders */}
-        {folders.length > 0 && (
-          <section className="mb-12">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <FolderOpen className="w-5 h-5 text-[#ad946d]" />
-              Albums
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {folders.map((folder, index) => (
-                <motion.button
-                  key={folder.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                  onClick={() => navigateToFolder(folder.id)}
-                  data-testid={`folder-${folder.id}`}
-                  className="group bg-white rounded-lg border border-gray-200 p-6 text-left hover:border-[#ad946d] hover:shadow-md transition-all"
-                >
-                  <FolderOpen className="w-8 h-8 text-[#ad946d] mb-3 group-hover:scale-110 transition-transform" />
-                  <h3 className="font-medium text-gray-900 mb-1">{folder.name}</h3>
-                  <p className="text-sm text-gray-500">
-                    {folder.file_count} files
-                  </p>
-                </motion.button>
-              ))}
-            </div>
-          </section>
-        )}
 
-        {/* Images */}
-        {imageFiles.length > 0 && (
-          <section className="mb-12">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <ImageIcon className="w-5 h-5 text-[#ad946d]" />
-              Photos ({gallery?.file_count || imageFiles.length})
-            </h2>
-            <div style={{ height: '80vh', width: '100%' }}>
-              <VirtuosoGrid
-                style={{ height: '100%' }}
-                totalCount={imageFiles.length}
-                data={imageFiles}
-                endReached={() => {
-                  if (hasMore && !loading) {
-                    setPage(p => p + 1);
-                  }
-                }}
-                components={{
-                  List: forwardRef(({ style, children, ...props }, ref) => (
-                    <div
-                      ref={ref}
-                      {...props}
-                      style={{ ...style }}
-                      className="gallery-grid"
+        {/* Guest Upload Mode */}
+        {gallery?.upload_only ? (
+          <GuestUpload
+            token={token}
+            folderName={gallery.folder_name}
+            allowedTypes={gallery.allowed_file_types}
+          />
+        ) : (
+          <>
+            {/* Folders */}
+            {folders.length > 0 && (
+              <section className="mb-12">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <FolderOpen className="w-5 h-5 text-[#ad946d]" />
+                  Albums
+                </h2>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {folders.map((folder, index) => (
+                    <motion.button
+                      key={folder.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      onClick={() => navigateToFolder(folder.id)}
+                      data-testid={`folder-${folder.id}`}
+                      className="group bg-white rounded-lg border border-gray-200 p-6 text-left hover:border-[#ad946d] hover:shadow-md transition-all"
                     >
-                      {children}
-                    </div>
-                  )),
-                  Item: ({ children, ...props }) => (
-                    <div {...props} style={{ padding: '0.5rem' }}>
-                      {children}
-                    </div>
-                  )
-                }}
-                itemContent={(index, file) => (
-                  <motion.div
-                    key={file.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: 0.05 }}
-                    className="image-card cursor-pointer group w-full h-full"
-                    onClick={() => openLightbox(index)}
-                    data-testid={`image-${file.id}`}
-                  >
-                    <img
-                      src={`${BACKEND_URL}${file.thumbnail_url}`}
-                      alt={file.name}
-                      loading="lazy"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-                    <div className="overlay flex items-end p-4">
-                      <span className="text-white text-sm truncate">{file.name}</span>
-                    </div>
-                  </motion.div>
-                )}
-              />
-            </div>
-          </section>
-        )}
+                      <FolderOpen className="w-8 h-8 text-[#ad946d] mb-3 group-hover:scale-110 transition-transform" />
+                      <h3 className="font-medium text-gray-900 mb-1">{folder.name}</h3>
+                      <p className="text-sm text-gray-500">
+                        {folder.file_count} files
+                      </p>
+                    </motion.button>
+                  ))}
+                </div>
+              </section>
+            )}
 
-        {/* Videos */}
-        {videoFiles.length > 0 && (
-          <section className="mb-12">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Film className="w-5 h-5 text-[#ad946d]" />
-              Videos ({videoFiles.length})
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {videoFiles.map((file, index) => (
-                <motion.div
-                  key={file.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="bg-white rounded-lg overflow-hidden shadow-sm border border-gray-200"
-                  data-testid={`video-${file.id}`}
-                >
-                  <video
-                    controls
-                    className="w-full aspect-video bg-black"
-                    preload="metadata"
-                  >
-                    <source src={`${BACKEND_URL}/api/files/${file.id}/stream`} />
-                  </video>
-                  <div className="p-4 flex items-center justify-between">
-                    <span className="text-sm text-gray-700 truncate">{file.name}</span>
-                    <a
-                      href={`${BACKEND_URL}/api/files/${file.id}/download`}
-                      download
-                      className="text-[#ad946d] hover:underline text-sm flex items-center gap-1"
-                      data-testid={`download-video-${file.id}`}
+            {/* Images */}
+            {imageFiles.length > 0 && (
+              <section className="mb-12">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <ImageIcon className="w-5 h-5 text-[#ad946d]" />
+                  Photos ({gallery?.file_count || imageFiles.length})
+                </h2>
+                <div style={{ height: '80vh', width: '100%' }}>
+                  <VirtuosoGrid
+                    style={{ height: '100%' }}
+                    totalCount={imageFiles.length}
+                    data={imageFiles}
+                    endReached={() => {
+                      if (hasMore && !loading) {
+                        setPage(p => p + 1);
+                      }
+                    }}
+                    components={{
+                      List: forwardRef(({ style, children, ...props }, ref) => (
+                        <div
+                          ref={ref}
+                          {...props}
+                          style={{ ...style }}
+                          className="gallery-grid"
+                        >
+                          {children}
+                        </div>
+                      )),
+                      Item: ({ children, ...props }) => (
+                        <div {...props} style={{ padding: '0.5rem' }}>
+                          {children}
+                        </div>
+                      )
+                    }}
+                    itemContent={(index, file) => (
+                      <motion.div
+                        key={file.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: 0.05 }}
+                        className="image-card cursor-pointer group w-full h-full"
+                        onClick={() => openLightbox(index)}
+                        data-testid={`image-${file.id}`}
+                      >
+                        <img
+                          src={`${BACKEND_URL}${file.thumbnail_url}`}
+                          alt={file.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        />
+                        <div className="overlay flex items-end p-4">
+                          <span className="text-white text-sm truncate">{file.name}</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  />
+                </div>
+              </section>
+            )}
+
+            {/* Videos */}
+            {videoFiles.length > 0 && (
+              <section className="mb-12">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <Film className="w-5 h-5 text-[#ad946d]" />
+                  Videos ({videoFiles.length})
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {videoFiles.map((file, index) => (
+                    <motion.div
+                      key={file.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                      className="bg-white rounded-lg overflow-hidden shadow-sm border border-gray-200"
+                      data-testid={`video-${file.id}`}
                     >
-                      <Download className="w-4 h-4" />
-                      Download
-                    </a>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </section>
-        )}
+                      <video
+                        controls
+                        className="w-full aspect-video bg-black"
+                        preload="metadata"
+                      >
+                        <source src={`${BACKEND_URL}/api/files/${file.id}/stream`} />
+                      </video>
+                      <div className="p-4 flex items-center justify-between">
+                        <span className="text-sm text-gray-700 truncate">{file.name}</span>
+                        <a
+                          href={`${BACKEND_URL}/api/files/${file.id}/download`}
+                          download
+                          className="text-[#ad946d] hover:underline text-sm flex items-center gap-1"
+                          data-testid={`download-video-${file.id}`}
+                        >
+                          <Download className="w-4 h-4" />
+                          Download
+                        </a>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </section>
+            )}
 
-        {/* Empty state */}
-        {folders.length === 0 && files.length === 0 && (
-          <div className="text-center py-20">
-            <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
-              <ImageIcon className="w-8 h-8 text-gray-400" />
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No content yet</h3>
-            <p className="text-gray-500">Photos and videos will appear here soon.</p>
-          </div>
+            {/* Empty state */}
+            {folders.length === 0 && files.length === 0 && (
+              <div className="text-center py-20">
+                <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                  <ImageIcon className="w-8 h-8 text-gray-400" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No content yet</h3>
+                <p className="text-gray-500">Photos and videos will appear here soon.</p>
+              </div>
+            )}
+          </>
         )}
       </div>
 

@@ -89,6 +89,8 @@ class ShareCreate(BaseModel):
     folder_id: str
     token: str
     permission: str = "read"  # read, edit, full
+    upload_only: bool = False
+    allowed_file_types: Optional[List[str]] = None  # e.g. ['.jpg', '.png']
 
 class ShareUpdate(BaseModel):
     permission: str
@@ -119,6 +121,8 @@ class ShareResponse(BaseModel):
     folder_id: str
     token: str
     permission: str
+    upload_only: bool = False
+    allowed_file_types: Optional[List[str]] = None
     created_at: str
     share_url: str
     folder_name: str = ""
@@ -373,6 +377,90 @@ async def upload_file(
         preview_url=preview_url
     )
 
+@api_router.post("/files/public-upload")
+async def upload_file_public(
+    token: str = Form(...),
+    file: UploadFile = File(...)
+):
+    # Verify token
+    share = await db.shares.find_one({'token': token})
+    if not share:
+        raise HTTPException(status_code=404, detail="Invalid share token")
+    
+    # Check if upload allowed (if upload_only is True, implies upload permission)
+    # If using 'permission' field, 'edit' or 'full' usually allows upload. 
+    # But 'upload_only' is a special override.
+    if not share.get('upload_only') and share['permission'] == 'read':
+        raise HTTPException(status_code=403, detail="Upload not allowed")
+        
+    folder_id = share['folder_id']
+    
+    # Check file type restrictions
+    ext = Path(file.filename).suffix.lower()
+    allowed_types = share.get('allowed_file_types')
+    if allowed_types and ext not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"File type {ext} not allowed. Allowed: {', '.join(allowed_types)}")
+    
+    # Verify folder exists
+    folder = await db.folders.find_one({'id': folder_id})
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    
+    file_id = str(uuid.uuid4())
+    stored_name = f"{file_id}{ext}"
+    file_path = FILES_DIR / stored_name
+    
+    # Determine file type
+    image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif'}
+    video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'}
+    
+    if ext in image_exts:
+        file_type = 'image'
+    elif ext in video_exts:
+        file_type = 'video'
+    else:
+        file_type = 'other'
+    
+    # Stream file to disk in chunks
+    file_size = 0
+    chunk_size = 1024 * 1024
+    async with aiofiles.open(file_path, 'wb') as f:
+        while chunk := await file.read(chunk_size):
+            await f.write(chunk)
+            file_size += len(chunk)
+    
+    # Generate thumbnails for images
+    thumbnail_url = None
+    preview_url = None
+    if file_type == 'image':
+        await generate_thumbnail(file_path, file_id)
+        await generate_preview(file_path, file_id)
+        thumbnail_url = f"/api/files/{file_id}/thumbnail"
+        preview_url = f"/api/files/{file_id}/preview"
+    
+    file_doc = {
+        'id': file_id,
+        'name': file.filename,
+        'folder_id': folder_id,
+        'stored_name': stored_name,
+        'file_type': file_type,
+        'size': file_size,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'uploaded_by_share': share['id'] # Track who uploaded it
+    }
+    await db.files.insert_one(file_doc)
+    
+    return FileResponseModel(
+        id=file_id,
+        name=file.filename,
+        folder_id=folder_id,
+        file_type=file_type,
+        size=file_size,
+        created_at=file_doc['created_at'],
+        thumbnail_url=thumbnail_url,
+        preview_url=preview_url
+    )
+
 @api_router.get("/files", response_model=dict)
 async def get_files(
     folder_id: str, 
@@ -601,6 +689,8 @@ async def create_share(share: ShareCreate, admin = Depends(get_current_admin)):
         'folder_id': share.folder_id,
         'token': share.token,
         'permission': share.permission,
+        'upload_only': share.upload_only,
+        'allowed_file_types': share.allowed_file_types,
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     await db.shares.insert_one(share_doc)
@@ -610,6 +700,8 @@ async def create_share(share: ShareCreate, admin = Depends(get_current_admin)):
         folder_id=share_doc['folder_id'],
         token=share_doc['token'],
         permission=share_doc['permission'],
+        upload_only=share_doc.get('upload_only', False),
+        allowed_file_types=share_doc.get('allowed_file_types'),
         created_at=share_doc['created_at'],
         share_url=f"{SHARE_DOMAIN}/{share.token}",
         folder_name=folder['name']
@@ -627,6 +719,8 @@ async def get_shares(admin = Depends(get_current_admin)):
             folder_id=s['folder_id'],
             token=s['token'],
             permission=s['permission'],
+            upload_only=s.get('upload_only', False),
+            allowed_file_types=s.get('allowed_file_types'),
             created_at=s['created_at'],
             share_url=f"{SHARE_DOMAIN}/{s['token']}",
             folder_name=folder_name
@@ -690,7 +784,9 @@ async def get_gallery_by_token(token: str):
     return {
         'folder_id': folder['id'],
         'folder_name': folder['name'],
-        'permission': share['permission']
+        'permission': share['permission'],
+        'upload_only': share.get('upload_only', False),
+        'allowed_file_types': share.get('allowed_file_types')
     }
 
 @api_router.get("/gallery/{token}/folders")
@@ -753,6 +849,16 @@ async def get_gallery_files(
     # Verify access
     if folder_id and not await is_folder_in_share(folder_id, share['folder_id']):
         raise HTTPException(status_code=403, detail="Access denied")
+        
+    # If share is upload_only, return empty list (files hidden)
+    if share.get('upload_only'):
+        return {
+            "items": [],
+            "total": 0,
+            "page": page,
+            "limit": limit,
+            "pages": 0
+        }
     
     skip = (page - 1) * limit
     files = await db.files.find({'folder_id': target_folder}, {'_id': 0}).skip(skip).limit(limit).to_list(limit)
