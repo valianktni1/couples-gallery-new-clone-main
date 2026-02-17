@@ -42,9 +42,12 @@ async def root():
 async def health_check():
     try:
         # Check database connectivity
+        if not db.client:
+            raise Exception("Database client not initialized")
         await db.client.admin.command('ping')
         return {"status": "ok", "database": "connected"}
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {"status": "error", "detail": str(e)}
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=str(e))
 
