@@ -15,9 +15,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 @app.on_event("startup")
 async def startup_db_client():
+    logger.info("Connecting to MongoDB...")
     db.connect()
+    logger.info("Backend application started")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -33,5 +40,11 @@ async def root():
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok"}
+    try:
+        # Check database connectivity
+        await db.client.admin.command('ping')
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "error", "detail": str(e)}
 
