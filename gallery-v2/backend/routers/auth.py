@@ -12,9 +12,11 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token")
 
 # Hardcoded admin user for V2 MVP
-# In production, this should be in the database
 ADMIN_USER = User(username="admin")
-ADMIN_PASSWORD_HASH = security.get_password_hash("admin") # Default password, change on first run
+
+def get_admin_password_hash():
+    # Lazy generation to avoid bcrypt issues on import
+    return security.get_password_hash("admin")
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     credentials_exception = HTTPException(
@@ -45,7 +47,7 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    if not security.verify_password(form_data.password, ADMIN_PASSWORD_HASH):
+    if not security.verify_password(form_data.password, get_admin_password_hash()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
