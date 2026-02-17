@@ -21,6 +21,8 @@ from io import BytesIO
 from PIL import Image
 import json
 import shutil
+from backend.utils import get_folder_path, get_unique_filename, sanitize_filename
+from backend.utils import get_folder_path, get_unique_filename, sanitize_filename
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -187,6 +189,27 @@ async def generate_preview(file_path: Path, file_id: str, max_size: int = 1500) 
         logger.error(f"Preview generation failed: {e}")
         return None
 
+async def delete_file_assets(file_id: str):
+    """
+    Helper to delete thumbnails and previews for a file.
+    Does NOT delete the main file, as that depends on storage strategy (rmtree vs unlink).
+    """
+    try:
+        # Delete thumbnails
+        thumb_webp = THUMBNAILS_DIR / f"{file_id}.webp"
+        thumb_jpg = THUMBNAILS_DIR / f"{file_id}.jpg"
+        if thumb_webp.exists(): thumb_webp.unlink()
+        if thumb_jpg.exists(): thumb_jpg.unlink()
+        
+        # Delete previews
+        prev_webp = PREVIEWS_DIR / f"{file_id}.webp"
+        prev_jpg = PREVIEWS_DIR / f"{file_id}.jpg"
+        if prev_webp.exists(): prev_webp.unlink()
+        if prev_jpg.exists(): prev_jpg.unlink()
+        
+    except Exception as e:
+        logger.error(f"Failed to delete assets for {file_id}: {e}")
+
 # ==================== SETUP ROUTES ====================
 
 @api_router.get("/setup/status")
@@ -235,6 +258,15 @@ async def create_folder(folder: FolderCreate, admin = Depends(get_current_admin)
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     await db.folders.insert_one(folder_doc)
+    
+    # Create physical directory
+    try:
+        physical_path = await get_folder_path(db, folder_doc['id'], FILES_DIR)
+        physical_path.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to create physical directory: {e}")
+        # We don't rollback DB insert for now, but in production we should.
+        
     return FolderResponse(**folder_doc)
 
 @api_router.get("/folders", response_model=List[FolderResponse])
@@ -263,26 +295,58 @@ async def get_folder(folder_id: str, admin = Depends(get_current_admin)):
 
 @api_router.put("/folders/{folder_id}", response_model=FolderResponse)
 async def update_folder(folder_id: str, folder: FolderUpdate, admin = Depends(get_current_admin)):
+    # Get old path before update
+    old_path = await get_folder_path(db, folder_id, FILES_DIR)
+    
     result = await db.folders.update_one({'id': folder_id}, {'$set': {'name': folder.name}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Folder not found")
+        
     updated = await db.folders.find_one({'id': folder_id}, {'_id': 0})
+    
+    # Rename physical directory
+    try:
+        new_path = await get_folder_path(db, folder_id, FILES_DIR)
+        if old_path.exists() and old_path != new_path:
+            # Check if new path parent exists (it should)
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.rename(new_path)
+    except Exception as e:
+        logger.error(f"Failed to rename physical directory: {e}")
+        
     return FolderResponse(**updated)
 
 @api_router.delete("/folders/{folder_id}")
 async def delete_folder(folder_id: str, admin = Depends(get_current_admin)):
-    # Delete all files in folder
-    files = await db.files.find({'folder_id': folder_id}, {'_id': 0}).to_list(1000)
+    # Get path before deleting hierarchy
+    try:
+        physical_path = await get_folder_path(db, folder_id, FILES_DIR)
+    except Exception:
+         # Fallback if DB lookup fails (e.g. broken hierarchy)
+        physical_path = None
+
+    # Delete all files in folder from DB
+    # Note: We rely on shutil.rmtree to clean up files on disk
+    # But we must clean up DB entries for files and subfolders
+    
+    # Recursively find all subfolder IDs to delete from DB
+    # (Simplified approach: The recursive calls in original code were doing this one by one)
+    # The original implementation was:
+    
+    # files = await db.files.find({'folder_id': folder_id}, {'_id': 0}).to_list(1000)
+    # for f in files:
+    #     thumb_path = THUMBNAILS_DIR / f"{f['id']}.webp"
+    #     if thumb_path.exists():
+    #         thumb_path.unlink()
+    
+    # We already define delete_file_assets helper above but we need to use it.
+    # However, delete_folder deleted all files with delete_many.
+    # To clean up assets, we should iterate BEFORE delete_many.
+    
+    files = await db.files.find({'folder_id': folder_id}, {'_id': 0}).to_list(10000)
     for f in files:
-        file_path = FILES_DIR / f['stored_name']
-        if file_path.exists():
-            file_path.unlink()
-        thumb_path = THUMBNAILS_DIR / f"{f['id']}.jpg"
-        if thumb_path.exists():
-            thumb_path.unlink()
-        preview_path = PREVIEWS_DIR / f"{f['id']}.jpg"
-        if preview_path.exists():
-            preview_path.unlink()
+        await delete_file_assets(f['id'])
+            
     await db.files.delete_many({'folder_id': folder_id})
     
     # Recursively delete subfolders
@@ -293,8 +357,16 @@ async def delete_folder(folder_id: str, admin = Depends(get_current_admin)):
     # Delete shares
     await db.shares.delete_many({'folder_id': folder_id})
     
-    # Delete folder
+    # Delete folder from DB
     await db.folders.delete_one({'id': folder_id})
+
+    # Delete physical directory
+    try:
+        if physical_path and physical_path.exists():
+            shutil.rmtree(physical_path)
+    except Exception as e:
+        logger.error(f"Failed to delete physical directory: {e}")
+        
     return {"message": "Folder deleted"}
 
 @api_router.get("/folders/{folder_id}/path")
@@ -324,8 +396,17 @@ async def upload_file(
     
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
-    stored_name = f"{file_id}{ext}"
-    file_path = FILES_DIR / stored_name
+    
+    # Determine physical path
+    folder_path = await get_folder_path(db, folder_id, FILES_DIR)
+    folder_path.mkdir(parents=True, exist_ok=True)
+    
+    # Generate unique filename in that folder
+    file_path = get_unique_filename(folder_path, file.filename)
+    stored_name = file_path.name # Just the filename, e.g. "image.jpg" or "image (1).jpg"
+    
+    # file_path is now full path
+
     
     # Determine file type
     image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif'}
@@ -407,8 +488,17 @@ async def upload_file_public(
         raise HTTPException(status_code=404, detail="Folder not found")
     
     file_id = str(uuid.uuid4())
-    stored_name = f"{file_id}{ext}"
-    file_path = FILES_DIR / stored_name
+    # ext = Path(file.filename).suffix.lower()
+
+    # Determine physical path
+    folder_path = await get_folder_path(db, folder_id, FILES_DIR)
+    folder_path.mkdir(parents=True, exist_ok=True)
+    
+    # Generate unique filename in that folder
+    file_path = get_unique_filename(folder_path, file.filename)
+    stored_name = file_path.name 
+
+    # file_path is now full path
     
     # Determine file type
     image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif'}
@@ -570,9 +660,23 @@ async def download_folder_as_zip(folder_id: str, token: Optional[str] = None, ad
     try:
         with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_STORED) as zf:
             for file_doc in files:
-                file_path = FILES_DIR / file_doc['stored_name']
+                # Resolve full path using folder structure
+                # This requires DB lookup for folder path for each file, or optimized approach.
+                # Since all files are in THIS folder, we can resolve folder path once.
+                
+                # file_path is folder_path / stored_name
+                # We need physical path of the folder
+                
+                # optimization: resolve folder path outside loop
+                pass 
+                
+        # Resolve folder path once
+        folder_physical_path = await get_folder_path(db, folder_id, FILES_DIR)
+        
+        with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_STORED) as zf:
+            for file_doc in files:
+                file_path = folder_physical_path / file_doc['stored_name']
                 if file_path.exists():
-                    # Add file to zip with original name (no compression for speed)
                     zf.write(file_path, file_doc['name'])
         
         # Return the zip file
@@ -601,43 +705,34 @@ async def download_files_as_zip(file_ids: List[str], admin = Depends(get_current
     temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
     
     try:
-        with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for file_id in file_ids:
-                file_doc = await db.files.find_one({'id': file_id}, {'_id': 0})
-                if file_doc:
-                    file_path = FILES_DIR / file_doc['stored_name']
-                    if file_path.exists():
-                        zf.write(file_path, file_doc['name'])
-        
-        return FastAPIFileResponse(
-            temp_zip.name, 
-            filename='selected_files.zip',
-            media_type='application/zip',
-            background=BackgroundTask(lambda: Path(temp_zip.name).unlink(missing_ok=True))
-        )
-    except Exception as e:
-        Path(temp_zip.name).unlink(missing_ok=True)
         logger.error(f"ZIP creation failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to create ZIP file")
 
 @api_router.get("/files/{file_id}/download")
 async def download_file(file_id: str):
-    file_doc = await db.files.find_one({'id': file_id}, {'_id': 0})
+    file_doc = await db.files.find_one({'id': file_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File not found")
-    file_path = FILES_DIR / file_doc['stored_name']
+        
+    folder_physical_path = await get_folder_path(db, file_doc['folder_id'], FILES_DIR)
+    file_path = folder_physical_path / file_doc['stored_name']
+    
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="File not found on disk")
+        
     return FastAPIFileResponse(file_path, filename=file_doc['name'])
 
 @api_router.get("/files/{file_id}/stream")
-async def stream_file(file_id: str):
-    file_doc = await db.files.find_one({'id': file_id}, {'_id': 0})
+async def stream_video(file_id: str, range: str = Header(None)):
+    file_doc = await db.files.find_one({'id': file_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File not found")
-    file_path = FILES_DIR / file_doc['stored_name']
+        
+    folder_physical_path = await get_folder_path(db, file_doc['folder_id'], FILES_DIR)
+    file_path = folder_physical_path / file_doc['stored_name']
+    
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="File not found on disk")
     
     ext = Path(file_doc['stored_name']).suffix.lower()
     media_types = {
@@ -655,17 +750,13 @@ async def delete_file(file_id: str, admin = Depends(get_current_admin)):
     file_doc = await db.files.find_one({'id': file_id}, {'_id': 0})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File not found")
+        
+    folder_physical_path = await get_folder_path(db, file_doc['folder_id'], FILES_DIR)
+    file_path = folder_physical_path / file_doc['stored_name']
     
-    # Delete physical files
-    file_path = FILES_DIR / file_doc['stored_name']
     if file_path.exists():
         file_path.unlink()
-    thumb_path = THUMBNAILS_DIR / f"{file_id}.jpg"
-    if thumb_path.exists():
-        thumb_path.unlink()
-    preview_path = PREVIEWS_DIR / f"{file_id}.jpg"
-    if preview_path.exists():
-        preview_path.unlink()
+    await delete_file_assets(file_id)
     
     await db.files.delete_one({'id': file_id})
     return {"message": "File deleted"}
@@ -729,7 +820,7 @@ async def get_shares(admin = Depends(get_current_admin)):
 
 @api_router.put("/shares/{share_id}", response_model=ShareResponse)
 async def update_share(share_id: str, share: ShareUpdate, admin = Depends(get_current_admin)):
-    result = await db.shares.update_one({'id': share_id}, {'$set': {'permission': share.permission}})
+    result = await db.shares.update_one({'id': share_id}, {'$set': {'permission': share.permission, 'upload_only': share.upload_only, 'allowed_file_types': share.allowed_file_types}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Share not found")
     updated = await db.shares.find_one({'id': share_id}, {'_id': 0})
@@ -739,6 +830,8 @@ async def update_share(share_id: str, share: ShareUpdate, admin = Depends(get_cu
         folder_id=updated['folder_id'],
         token=updated['token'],
         permission=updated['permission'],
+        upload_only=updated.get('upload_only', False),
+        allowed_file_types=updated.get('allowed_file_types'),
         created_at=updated['created_at'],
         share_url=f"{SHARE_DOMAIN}/{updated['token']}",
         folder_name=folder['name'] if folder else 'Unknown'
