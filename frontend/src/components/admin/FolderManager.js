@@ -52,24 +52,24 @@ export default function FolderManager({ onStatsChange }) {
   const { token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentFolderId = searchParams.get('folder');
-  
+
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [path, setPath] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Dialogs
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [editingFolder, setEditingFolder] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [previewFile, setPreviewFile] = useState(null);
-  
+
   // Upload
   const [uploadProgress, setUploadProgress] = useState({});
   const [isUploading, setIsUploading] = useState(false);
   const [totalUploadProgress, setTotalUploadProgress] = useState({ current: 0, total: 0 });
-  
+
   // Selection mode
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState(new Set());
@@ -86,7 +86,7 @@ export default function FolderManager({ onStatsChange }) {
     setLoading(true);
     try {
       // Fetch folders
-      const foldersUrl = currentFolderId 
+      const foldersUrl = currentFolderId
         ? `${API}/folders?parent_id=${currentFolderId}`
         : `${API}/folders?parent_id=`;
       const foldersRes = await fetch(foldersUrl, { headers });
@@ -96,9 +96,11 @@ export default function FolderManager({ onStatsChange }) {
 
       // Fetch files if in a folder
       if (currentFolderId) {
-        const filesRes = await fetch(`${API}/files?folder_id=${currentFolderId}`, { headers });
+        // Fetch all files (limit=1000 for now to support large folders until pagination UI is built)
+        const filesRes = await fetch(`${API}/files?folder_id=${currentFolderId}&limit=1000`, { headers });
         if (filesRes.ok) {
-          setFiles(await filesRes.json());
+          const data = await filesRes.json();
+          setFiles(data.items || []); // Fix: Extract items from response dict
         }
 
         // Fetch path
@@ -126,9 +128,11 @@ export default function FolderManager({ onStatsChange }) {
     }
   };
 
+  // ... (createFolder, updateFolder, deleteItem logic remains same) ...
+
   const createFolder = async () => {
     if (!newFolderName.trim()) return;
-    
+
     try {
       const res = await fetch(`${API}/folders`, {
         method: 'POST',
@@ -138,7 +142,7 @@ export default function FolderManager({ onStatsChange }) {
           parent_id: currentFolderId || null
         })
       });
-      
+
       if (res.ok) {
         toast.success('Folder created');
         setShowNewFolder(false);
@@ -156,14 +160,14 @@ export default function FolderManager({ onStatsChange }) {
 
   const updateFolder = async () => {
     if (!editingFolder || !editingFolder.newName.trim()) return;
-    
+
     try {
       const res = await fetch(`${API}/folders/${editingFolder.id}`, {
         method: 'PUT',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: editingFolder.newName })
       });
-      
+
       if (res.ok) {
         toast.success('Folder renamed');
         setEditingFolder(null);
@@ -179,14 +183,14 @@ export default function FolderManager({ onStatsChange }) {
 
   const deleteItem = async () => {
     if (!deleteTarget) return;
-    
+
     try {
-      const endpoint = deleteTarget.type === 'folder' 
+      const endpoint = deleteTarget.type === 'folder'
         ? `${API}/folders/${deleteTarget.id}`
         : `${API}/files/${deleteTarget.id}`;
-      
+
       const res = await fetch(endpoint, { method: 'DELETE', headers });
-      
+
       if (res.ok) {
         toast.success(`${deleteTarget.type === 'folder' ? 'Folder' : 'File'} deleted`);
         setDeleteTarget(null);
@@ -202,6 +206,7 @@ export default function FolderManager({ onStatsChange }) {
   };
 
   // Selection functions
+  // ... (selection logic remains same) ...
   const toggleSelectFile = (fileId) => {
     const newSelected = new Set(selectedFiles);
     if (newSelected.has(fileId)) {
@@ -227,10 +232,10 @@ export default function FolderManager({ onStatsChange }) {
 
   const deleteSelectedFiles = async () => {
     if (selectedFiles.size === 0) return;
-    
+
     const filesToDelete = Array.from(selectedFiles);
     let deleted = 0;
-    
+
     for (const fileId of filesToDelete) {
       try {
         const res = await fetch(`${API}/files/${fileId}`, { method: 'DELETE', headers });
@@ -241,7 +246,7 @@ export default function FolderManager({ onStatsChange }) {
         console.error(`Failed to delete file ${fileId}:`, e);
       }
     }
-    
+
     toast.success(`Deleted ${deleted} file(s)`);
     setShowDeleteSelectedConfirm(false);
     setSelectedFiles(new Set());
@@ -250,12 +255,13 @@ export default function FolderManager({ onStatsChange }) {
     onStatsChange?.();
   };
 
-  // Download all files as ZIP - direct link (no blob to avoid memory crash)
+
+  // ZIP Download logic ...
   const downloadAllAsZip = () => {
     if (!currentFolderId || files.length === 0) return;
-    
+
     toast.info('Starting ZIP download...');
-    
+
     // Open in new window with token in URL for auth
     const downloadUrl = `${BACKEND_URL}/api/folders/${currentFolderId}/download-zip?token=${token}`;
     window.open(downloadUrl, '_blank');
@@ -264,29 +270,29 @@ export default function FolderManager({ onStatsChange }) {
   // Download selected files as ZIP
   const downloadSelectedAsZip = async () => {
     if (selectedFiles.size === 0) return;
-    
+
     setIsDownloading(true);
     toast.info('Preparing ZIP file...');
-    
+
     try {
       const fileIds = Array.from(selectedFiles);
-      
+
       // For selected files, we need POST so use a form submission approach
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = `${BACKEND_URL}/api/files/download-zip?token=${token}`;
       form.target = '_blank';
-      
+
       const input = document.createElement('input');
       input.type = 'hidden';
       input.name = 'file_ids';
       input.value = JSON.stringify(fileIds);
       form.appendChild(input);
-      
+
       document.body.appendChild(form);
       form.submit();
       document.body.removeChild(form);
-      
+
       toast.success('ZIP download started!');
     } catch (e) {
       console.error('ZIP download failed:', e);
@@ -296,6 +302,7 @@ export default function FolderManager({ onStatsChange }) {
     }
   };
 
+
   const onDrop = useCallback(async (acceptedFiles) => {
     if (!currentFolderId) {
       toast.error('Please select a folder first');
@@ -303,68 +310,104 @@ export default function FolderManager({ onStatsChange }) {
     }
 
     setIsUploading(true);
-    const progress = {};
+    const progressMap = {};
     const total = acceptedFiles.length;
-    let completed = 0;
+    let completedCount = 0;
+
+    // Initialize progress
+    acceptedFiles.forEach(f => { progressMap[f.name] = 0; });
+    setUploadProgress({ ...progressMap });
     setTotalUploadProgress({ current: 0, total });
-    
-    for (const file of acceptedFiles) {
-      progress[file.name] = 0;
-      setUploadProgress({ ...progress });
-      
+
+    // Queue for concurrent uploads
+    const queue = [...acceptedFiles];
+    const CONCURRENT_LIMIT = 3;
+    const activeUploads = new Set();
+
+    const processQueue = async () => {
+      if (queue.length === 0 && activeUploads.size === 0) {
+        return;
+      }
+
+      while (activeUploads.size < CONCURRENT_LIMIT && queue.length > 0) {
+        const file = queue.shift();
+        const promise = uploadOneFile(file);
+        activeUploads.add(promise);
+
+        // Remove from active set when done
+        promise.finally(() => {
+          activeUploads.delete(promise);
+          processQueue(); // checking if more work can be done
+        });
+      }
+    };
+
+    const uploadOneFile = async (file) => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('folder_id', currentFolderId);
-      
+
       try {
-        // Use XMLHttpRequest for progress tracking
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          
+
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
               const percent = Math.round((event.loaded / event.total) * 100);
-              progress[file.name] = percent;
-              setUploadProgress({ ...progress });
+              setUploadProgress(prev => ({ ...prev, [file.name]: percent }));
             }
           };
-          
+
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
-              progress[file.name] = 100;
-              setUploadProgress({ ...progress });
-              completed++;
-              setTotalUploadProgress({ current: completed, total });
+              setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
+              completedCount++;
+              setTotalUploadProgress({ current: completedCount, total });
               resolve();
             } else {
-              try {
-                const error = JSON.parse(xhr.responseText);
-                toast.error(`Failed to upload ${file.name}: ${error.detail}`);
-              } catch {
-                toast.error(`Failed to upload ${file.name}`);
-              }
-              reject();
+              reject(new Error(xhr.responseText));
             }
           };
-          
-          xhr.onerror = () => {
-            toast.error(`Failed to upload ${file.name}`);
-            reject();
-          };
-          
+
+          xhr.onerror = () => reject(new Error('Network error'));
+
           xhr.open('POST', `${API}/files/upload`);
           xhr.setRequestHeader('Authorization', `Bearer ${token}`);
           xhr.send(formData);
         });
       } catch (e) {
-        // Continue with next file
+        console.error(`Failed to upload ${file.name}`, e);
+        toast.error(`Failed: ${file.name}`);
+        setUploadProgress(prev => ({ ...prev, [file.name]: 'Error' }));
       }
-    }
-    
+    };
+
+    await processQueue();
+
+    // Wait for all remaining active uploads to finish
+    // Since processQueue is recursive-ish but triggered by promise completion,
+    // we need a way to know when ALL are done.
+    // Actually, a simpler way is to use a pool function.
+
+    // Let's implement a simpler Promise pool here:
+
+    const pool = async (items, concurrency, fn) => {
+      const results = [];
+      const iterator = items.entries();
+      const workers = new Array(concurrency).fill(iterator).map(async (iterator) => {
+        for (const [_, item] of iterator) {
+          await fn(item);
+        }
+      });
+      await Promise.all(workers);
+    };
+
+    await pool(acceptedFiles, 3, uploadOneFile);
+
     setIsUploading(false);
     setUploadProgress({});
     setTotalUploadProgress({ current: 0, total: 0 });
-    toast.success(`Uploaded ${completed}/${total} file(s)`);
+    toast.success(`Uploaded ${completedCount}/${total} file(s)`);
     fetchContent();
     onStatsChange?.();
   }, [currentFolderId, token]);
@@ -461,9 +504,9 @@ export default function FolderManager({ onStatsChange }) {
               {Math.round((totalUploadProgress.current / totalUploadProgress.total) * 100) || 0}% complete
             </span>
           </div>
-          <Progress 
-            value={(totalUploadProgress.current / totalUploadProgress.total) * 100 || 0} 
-            className="h-2 mb-4" 
+          <Progress
+            value={(totalUploadProgress.current / totalUploadProgress.total) * 100 || 0}
+            className="h-2 mb-4"
           />
           <div className="max-h-32 overflow-y-auto space-y-2">
             {Object.entries(uploadProgress).map(([name, progress]) => (
@@ -643,31 +686,29 @@ export default function FolderManager({ onStatsChange }) {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ delay: index * 0.02 }}
-                  className={`group bg-[#1a1a1a] rounded-lg border overflow-hidden transition-colors relative ${
-                    selectedFiles.has(file.id) 
-                      ? 'border-[#ad946d] ring-2 ring-[#ad946d]/30' 
+                  className={`group bg-[#1a1a1a] rounded-lg border overflow-hidden transition-colors relative ${selectedFiles.has(file.id)
+                      ? 'border-[#ad946d] ring-2 ring-[#ad946d]/30'
                       : 'border-[#2a2a2a] hover:border-[#3a3a3a]'
-                  } ${selectionMode ? 'cursor-pointer' : ''}`}
+                    } ${selectionMode ? 'cursor-pointer' : ''}`}
                   onClick={() => selectionMode && toggleSelectFile(file.id)}
                   data-testid={`file-${file.id}`}
                 >
                   {/* Selection checkbox overlay */}
                   {selectionMode && (
                     <div className="absolute top-2 left-2 z-10">
-                      <div 
-                        className={`w-6 h-6 rounded flex items-center justify-center ${
-                          selectedFiles.has(file.id) 
-                            ? 'bg-[#ad946d] text-white' 
+                      <div
+                        className={`w-6 h-6 rounded flex items-center justify-center ${selectedFiles.has(file.id)
+                            ? 'bg-[#ad946d] text-white'
                             : 'bg-black/50 text-white border border-white/30'
-                        }`}
+                          }`}
                       >
                         {selectedFiles.has(file.id) && <Check className="w-4 h-4" />}
                       </div>
                     </div>
                   )}
-                  
+
                   {file.file_type === 'image' ? (
-                    <div 
+                    <div
                       className="aspect-square bg-[#252525] relative cursor-pointer"
                       onClick={(e) => {
                         if (!selectionMode) {
@@ -761,7 +802,7 @@ export default function FolderManager({ onStatsChange }) {
             {currentFolderId ? 'This folder is empty' : 'No galleries yet'}
           </h3>
           <p className="text-gray-500 mb-4">
-            {currentFolderId 
+            {currentFolderId
               ? 'Upload files or create subfolders'
               : 'Create your first gallery to get started'
             }
