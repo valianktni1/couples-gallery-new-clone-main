@@ -40,6 +40,16 @@ PREVIEWS_DIR = DATA_DIR / 'previews'
 for d in [DATA_DIR, FILES_DIR, THUMBNAILS_DIR, PREVIEWS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+# ==================== APP SETUP ====================
+
+app = FastAPI()
+api_router = APIRouter(prefix="/api")
+security = HTTPBearer(auto_error=False)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # Create DB indexes on startup
 @app.on_event("startup")
 async def create_indexes():
@@ -57,14 +67,6 @@ JWT_EXPIRATION_HOURS = 24
 
 # Domain for share links
 SHARE_DOMAIN = os.environ.get('SHARE_DOMAIN', 'https://weddingsbymark.uk')
-
-app = FastAPI()
-api_router = APIRouter(prefix="/api")
-security = HTTPBearer(auto_error=False)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # ==================== MODELS ====================
 
