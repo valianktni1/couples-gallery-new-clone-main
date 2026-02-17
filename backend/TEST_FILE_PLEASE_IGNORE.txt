@@ -1,0 +1,3 @@
+This is a test file to check if GitHub Desktop sees this folder.
+If you see this file in GitHub Desktop, then we are in the right place!
+If you DON'T see this, then GitHub Desktop is looking somewhere else.
