@@ -18,7 +18,7 @@ services:
 
   backend:
     build:
-      context: ./gallery-v2/backend
+      context: https://github.com/valianktni1/couples-gallery-new-clone-main.git#main:gallery-v2/backend
       dockerfile: Dockerfile
     container_name: gallery-api-v2
     restart: unless-stopped
@@ -46,7 +46,7 @@ services:
 
   frontend:
     build:
-      context: ./gallery-v2/frontend
+      context: https://github.com/valianktni1/couples-gallery-new-clone-main.git#main:gallery-v2/frontend
       dockerfile: Dockerfile
     container_name: gallery-web-v2
     restart: unless-stopped
