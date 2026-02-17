@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: gallery-db
+    restart: unless-stopped
+    volumes:
+      # Map to TrueNAS 'db' subdirectory in app data
+      - /mnt/apps/newweddingsbymarkgallery/db:/data/db
+    networks:
+      - gallery-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gallery-api
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      # App data (thumbnails, previews)
+      - /mnt/apps/newweddingsbymarkgallery/thumbnails:/app/data/thumbnails
+      - /mnt/apps/newweddingsbymarkgallery/previews:/app/data/previews
+      # User files (original high-res images, videos)
+      - /mnt/nextcloud/newwedidngsbymarkuserfiles:/app/files
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - DB_NAME=couples_gallery
+      # IMPORTANT: Change this secret in production!
+      - JWT_SECRET=change-this-secret-in-production-please
+      - FILES_DIR=/app/files
+      - DATA_DIR=/app/data
+    networks:
+      - gallery-network
+    healthcheck:
+      test: curl -f http://localhost:8001/api/setup/status || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Build with empty backend URL to use relative API paths (proxied by Nginx)
+        - REACT_APP_BACKEND_URL=
+    container_name: gallery-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - gallery-network
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    image: nginx:alpine
+    container_name: gallery-gateway
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      # TrueNAS Port Mapping: Map external port 3037 to internal 80
+      - "3037:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - gallery-network
+
+networks:
+  gallery-network:
+    driver: bridge
