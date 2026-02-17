@@ -14,8 +14,6 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# Add missing dependencies if not in requirements
-RUN pip install pydantic-settings pymongo
 
 # Copy app code
 COPY . .
